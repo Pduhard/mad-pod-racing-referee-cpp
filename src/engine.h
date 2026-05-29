@@ -48,14 +48,17 @@ struct Pod {
     double vy = 0;
     double angle = 0;     // facing, radians (0 == +x)
     int shieldtimer = 0;  // > 0 while shield active (engine off, 10x mass)
-    int next = 0;         // index of the next checkpoint to reach
-    bool won = false;     // passed the final checkpoint
+    int next = 0;          // index of the next checkpoint to reach
+    bool won = false;      // passed the final checkpoint
+    bool boostUsed = false; // the one-shot BOOST has been consumed
 };
 
 struct Command {
     double targetX = 0;
     double targetY = 0;
     int thrust = 0;
+    bool shield = false;  // SHIELD: 10x mass this turn, engine off for 3 turns
+    bool boost = false;   // BOOST: 650 once per race, then 200
 };
 
 // Signed shortest rotation (radians) from the pod's facing toward (tx,ty).
@@ -170,14 +173,30 @@ constexpr int MAX_PODS = 8;  // CSB/MPR uses at most 4
 inline void step(Pod* pods, int n, const Command* cmds, const Vec2* cps = nullptr,
                  int numCp = 0, bool firstTurn = false) {
     for (int i = 0; i < n; ++i) {
+        // Resolve effective thrust: SHIELD arms the timer and cuts the engine;
+        // BOOST is 650 the first time, 200 after; an active shield forces 0.
+        int thr = cmds[i].thrust;
+        if (cmds[i].shield) {
+            pods[i].shieldtimer = 4;
+            thr = 0;
+        } else if (cmds[i].boost) {
+            if (!pods[i].boostUsed) {
+                pods[i].boostUsed = true;
+                thr = 650;
+            } else {
+                thr = 200;
+            }
+        }
+        if (pods[i].shieldtimer > 0) thr = 0;
+
         if (firstTurn) {
             pods[i].angle = normalizeAngle(
                 getAngle(pods[i].x, pods[i].y, cmds[i].targetX, cmds[i].targetY));
         } else {
             rotateToward(pods[i], cmds[i].targetX, cmds[i].targetY);
         }
-        pods[i].vx += std::cos(pods[i].angle) * cmds[i].thrust;
-        pods[i].vy += std::sin(pods[i].angle) * cmds[i].thrust;
+        pods[i].vx += std::cos(pods[i].angle) * thr;
+        pods[i].vy += std::sin(pods[i].angle) * thr;
     }
 
     auto passCp = [&](int i) {

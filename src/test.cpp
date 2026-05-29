@@ -128,6 +128,54 @@ static void crossing_checkpoint_advances_next() {
     CHECK("not won with a checkpoint still ahead", pod.won == false);
 }
 
+// SHIELD: no thrust this turn, and the shield timer is set (then decays 4->3).
+static void shield_zeroes_thrust_and_arms_timer() {
+    Pod pod;
+    Command cmd;
+    cmd.targetX = 10000;
+    cmd.thrust = 100;  // ignored when shielding
+    cmd.shield = true;
+    simulateTurn(pod, cmd);
+    CHECK("shield => no velocity", near(pod.vx, 0) && near(pod.vy, 0));
+    CHECK("shieldtimer set to 4 then decayed to 3", pod.shieldtimer == 3);
+}
+
+// First BOOST of the race gives thrust 650; friction -> trunc(650*0.85)=552.
+static void boost_first_use_is_650() {
+    Pod pod;  // facing +x
+    Command cmd;
+    cmd.targetX = 10000;
+    cmd.boost = true;
+    simulateTurn(pod, cmd);
+    CHECK("boost moves to x=650", near(pod.x, 650));
+    CHECK("vx after friction == trunc(650*0.85) == 552", near(pod.vx, 552));
+    CHECK("boost marked used", pod.boostUsed == true);
+}
+
+// A second BOOST (already used) degrades to thrust 200; friction -> 170.
+static void boost_second_use_is_200() {
+    Pod pod;
+    pod.boostUsed = true;
+    Command cmd;
+    cmd.targetX = 10000;
+    cmd.boost = true;
+    simulateTurn(pod, cmd);
+    CHECK("second boost vx after friction == trunc(200*0.85) == 170",
+          near(pod.vx, 170));
+}
+
+// While a shield is still active (timer > 0), the engine stays off.
+static void active_shield_blocks_thrust() {
+    Pod pod;
+    pod.shieldtimer = 2;
+    Command cmd;
+    cmd.targetX = 10000;
+    cmd.thrust = 100;
+    simulateTurn(pod, cmd);
+    CHECK("active shield => thrust ignored, no velocity", near(pod.vx, 0));
+    CHECK("shieldtimer decayed 2 -> 1", pod.shieldtimer == 1);
+}
+
 int main() {
     thrust_straight_from_rest();
     round_is_half_up();
@@ -136,6 +184,10 @@ int main() {
     first_turn_faces_target_instantly();
     head_on_collision_swaps_velocities();
     crossing_checkpoint_advances_next();
+    shield_zeroes_thrust_and_arms_timer();
+    boost_first_use_is_650();
+    boost_second_use_is_200();
+    active_shield_blocks_thrust();
 
     std::fprintf(stderr, "\n%d passed, %d failed\n", passed, failed);
     return failed > 0 ? 1 : 0;
