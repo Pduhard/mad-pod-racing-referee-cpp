@@ -41,8 +41,54 @@ static void thrust_straight_from_rest() {
     CHECK("vel.y == 0", near(pod.vy, 0));
 }
 
+// CG/robostac round is floor(x + 0.5) — HALF_UP toward +inf, NOT std::round
+// (which is half-away-from-zero: std::round(-2.5) == -3).
+static void round_is_half_up() {
+    CHECK("round(2.5) == 3", near(roundHalfUp(2.5), 3));
+    CHECK("round(2.4) == 2", near(roundHalfUp(2.4), 2));
+    CHECK("round(-2.5) == -2 (half up, not away-from-zero)",
+          near(roundHalfUp(-2.5), -2));
+}
+
+// Rotating toward a target more than 18 deg away caps the turn at 18 deg.
+static void rotation_caps_at_18_degrees() {
+    Pod pod;  // angle 0, facing +x
+    Command cmd;
+    cmd.targetX = 0;
+    cmd.targetY = 10000;  // straight up: +90 deg, well past the cap
+    cmd.thrust = 0;       // isolate rotation
+    simulateTurn(pod, cmd);
+    CHECK("angle capped to +18 deg", near(pod.angle, MAX_ROTATE));
+}
+
+// Within the cap, the pod snaps directly to the target heading.
+static void rotation_snaps_when_within_cap() {
+    Pod pod;
+    Command cmd;
+    cmd.targetX = std::cos(0.1) * 1000;  // 0.1 rad above +x (< 18 deg)
+    cmd.targetY = std::sin(0.1) * 1000;
+    cmd.thrust = 0;
+    simulateTurn(pod, cmd);
+    CHECK("angle snaps to target heading (0.1 rad)", near(pod.angle, 0.1));
+}
+
+// On the first turn the pod faces its target instantly (no 18 deg cap).
+static void first_turn_faces_target_instantly() {
+    Pod pod;  // angle 0
+    Command cmd;
+    cmd.targetX = 0;
+    cmd.targetY = 10000;  // straight up
+    cmd.thrust = 0;
+    simulateTurn(pod, cmd, /*firstTurn=*/true);
+    CHECK("first turn faces target (pi/2), uncapped", near(pod.angle, M_PI / 2));
+}
+
 int main() {
     thrust_straight_from_rest();
+    round_is_half_up();
+    rotation_caps_at_18_degrees();
+    rotation_snaps_when_within_cap();
+    first_turn_faces_target_instantly();
 
     std::fprintf(stderr, "\n%d passed, %d failed\n", passed, failed);
     return failed > 0 ? 1 : 0;

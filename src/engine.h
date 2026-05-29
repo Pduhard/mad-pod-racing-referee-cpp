@@ -12,7 +12,23 @@
 namespace engine {
 
 constexpr double FRICTION = 0.85;
+constexpr double TWO_PI = 2.0 * M_PI;
 constexpr double MAX_ROTATE = 18.0 * M_PI / 180.0;  // 18 deg/turn cap
+
+// CG/robostac rounding: floor(x + 0.5), HALF_UP toward +inf. NOT std::round
+// (half-away-from-zero) — they differ on negative halves, e.g. -2.5.
+inline double roundHalfUp(double x) { return std::floor(x + 0.5); }
+
+// Absolute heading from (ax,ay) to (bx,by), radians.
+inline double getAngle(double ax, double ay, double bx, double by) {
+    return std::atan2(by - ay, bx - ax);
+}
+
+inline double normalizeAngle(double a) {
+    while (a < 0) a += TWO_PI;
+    while (a > TWO_PI) a -= TWO_PI;
+    return a;
+}
 
 struct Pod {
     double x = 0;      // position
@@ -28,22 +44,44 @@ struct Command {
     int thrust = 0;
 };
 
-// Advance a single pod one turn (no rotation/collision yet): thrust along the
-// current facing, move by the new velocity, apply friction, round position.
-inline void simulateTurn(Pod& pod, const Command& cmd) {
-    // Apply thrust along the current facing.
+// Signed shortest rotation (radians) from the pod's facing toward (tx,ty).
+inline double diffAngle(const Pod& pod, double tx, double ty) {
+    double a = getAngle(pod.x, pod.y, tx, ty);
+    double da = std::fmod(a - pod.angle, TWO_PI);
+    return std::fmod(2 * da, TWO_PI) - da;
+}
+
+// Rotate toward the target, capped at MAX_ROTATE per turn. Within the cap the
+// pod snaps directly to the target heading. No angle normalization here — this
+// mirrors robostac's applyRotate (normalization is only done on the first turn).
+inline void rotateToward(Pod& pod, double tx, double ty) {
+    double a = getAngle(pod.x, pod.y, tx, ty);
+    double rot = diffAngle(pod, tx, ty);
+    if (rot < -MAX_ROTATE) a = pod.angle - MAX_ROTATE;
+    if (rot > MAX_ROTATE) a = pod.angle + MAX_ROTATE;
+    pod.angle = a;
+}
+
+// Advance a single pod one turn (no collision yet): rotate toward target,
+// thrust along the new facing, move, apply friction, round position. On the
+// first turn the pod faces its target instantly (no rotation cap).
+inline void simulateTurn(Pod& pod, const Command& cmd, bool firstTurn = false) {
+    if (firstTurn) {
+        pod.angle = normalizeAngle(getAngle(pod.x, pod.y, cmd.targetX, cmd.targetY));
+    } else {
+        rotateToward(pod, cmd.targetX, cmd.targetY);
+    }
+
     pod.vx += std::cos(pod.angle) * cmd.thrust;
     pod.vy += std::sin(pod.angle) * cmd.thrust;
 
-    // Move (full turn, no collision).
     pod.x += pod.vx;
     pod.y += pod.vy;
 
-    // End of turn: friction truncates velocity toward zero, position rounds.
     pod.vx = std::trunc(pod.vx * FRICTION);
     pod.vy = std::trunc(pod.vy * FRICTION);
-    pod.x = std::round(pod.x);
-    pod.y = std::round(pod.y);
+    pod.x = roundHalfUp(pod.x);
+    pod.y = roundHalfUp(pod.y);
 }
 
 }  // namespace engine
