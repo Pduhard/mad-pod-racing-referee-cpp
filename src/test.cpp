@@ -111,6 +111,23 @@ static void head_on_collision_swaps_velocities() {
     CHECK("pod B returns near x=1000", near(pods[1].x, 1000));
 }
 
+// A pod whose movement path passes within 600 of its next checkpoint advances
+// its `next` index (and is not "won" while more checkpoints remain).
+static void crossing_checkpoint_advances_next() {
+    Pod pod;
+    pod.x = 500;
+    pod.vx = 600;  // will move to x=1100 this turn, passing through (1000,0)
+    Vec2 cps[2] = {{1000, 0}, {5000, 0}};
+    Command cmd;
+    cmd.targetX = 5000;  // straight ahead: no rotation
+    cmd.thrust = 0;
+
+    step(&pod, 1, &cmd, cps, 2);
+
+    CHECK("next advanced 0 -> 1 after crossing cp0", pod.next == 1);
+    CHECK("not won with a checkpoint still ahead", pod.won == false);
+}
+
 int main() {
     thrust_straight_from_rest();
     round_is_half_up();
@@ -118,6 +135,7 @@ int main() {
     rotation_snaps_when_within_cap();
     first_turn_faces_target_instantly();
     head_on_collision_swaps_velocities();
+    crossing_checkpoint_advances_next();
 
     std::fprintf(stderr, "\n%d passed, %d failed\n", passed, failed);
     return failed > 0 ? 1 : 0;

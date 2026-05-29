@@ -18,6 +18,8 @@ constexpr double POD_RADIUS = 400.0;
 constexpr double POD_RSQ = (2 * POD_RADIUS) * (2 * POD_RADIUS);  // 800^2
 constexpr double MIN_IMPULSE = 120.0;
 constexpr double BOUNCE_EPS = 0.00001;
+constexpr double CP_RADIUS = 600.0;
+constexpr double CP_RSQ = CP_RADIUS * CP_RADIUS;  // 600^2
 
 // CG/robostac rounding: floor(x + 0.5), HALF_UP toward +inf. NOT std::round
 // (half-away-from-zero) — they differ on negative halves, e.g. -2.5.
@@ -34,6 +36,11 @@ inline double normalizeAngle(double a) {
     return a;
 }
 
+struct Vec2 {
+    double x = 0;
+    double y = 0;
+};
+
 struct Pod {
     double x = 0;      // position
     double y = 0;
@@ -41,6 +48,8 @@ struct Pod {
     double vy = 0;
     double angle = 0;     // facing, radians (0 == +x)
     int shieldtimer = 0;  // > 0 while shield active (engine off, 10x mass)
+    int next = 0;         // index of the next checkpoint to reach
+    bool won = false;     // passed the final checkpoint
 };
 
 struct Command {
@@ -126,11 +135,40 @@ inline void forwardTime(Pod* pods, int n, double t) {
     }
 }
 
+// True if the segment from (p1x,p1y) to (p2x,p2y) passes within sqrt(cpRsq) of
+// cp (i.e. the pod's center crosses the checkpoint during the move). Ported from
+// robostac's cpCollide.
+inline bool cpCollide(double p1x, double p1y, double p2x, double p2y,
+                      const Vec2& cp, double cpRsq) {
+    double dx = p2x - p1x;
+    double dy = p2y - p1y;
+    double ppx = p1x;
+    double ppy = p1y;
+    double pd2 = dx * dx + dy * dy;
+    if (pd2 != 0) {
+        double u = ((cp.x - p1x) * dx + (cp.y - p1y) * dy) / pd2;
+        if (u > 1) {
+            ppx = p2x;
+            ppy = p2y;
+        } else if (u > 0) {
+            ppx = p1x + u * dx;
+            ppy = p1y + u * dy;
+        }
+    }
+    ppx -= cp.x;
+    ppy -= cp.y;
+    return (ppx * ppx + ppy * ppy) < cpRsq;
+}
+
+constexpr int MAX_PODS = 8;  // CSB/MPR uses at most 4
+
 // Advance the whole game one turn: rotate + thrust each pod from its command,
 // then move with elastic collisions resolved earliest-first (robostac's
-// nextTurn), then friction + round + shield decay. Checkpoints, shield/boost
-// activation land in later increments.
-inline void step(Pod* pods, int n, const Command* cmds, bool firstTurn = false) {
+// nextTurn), detecting checkpoint passage along the swept path, then friction +
+// round + shield decay. Pass cps/numCp to enable checkpoint detection; omit them
+// for pure-physics tests. Shield/boost activation and timeout land later.
+inline void step(Pod* pods, int n, const Command* cmds, const Vec2* cps = nullptr,
+                 int numCp = 0, bool firstTurn = false) {
     for (int i = 0; i < n; ++i) {
         if (firstTurn) {
             pods[i].angle = normalizeAngle(
@@ -140,6 +178,21 @@ inline void step(Pod* pods, int n, const Command* cmds, bool firstTurn = false) 
         }
         pods[i].vx += std::cos(pods[i].angle) * cmds[i].thrust;
         pods[i].vy += std::sin(pods[i].angle) * cmds[i].thrust;
+    }
+
+    auto passCp = [&](int i) {
+        pods[i].next++;
+        if (pods[i].next >= numCp) {
+            pods[i].next = numCp - 1;
+            pods[i].won = true;
+        }
+    };
+
+    double curx[MAX_PODS];
+    double cury[MAX_PODS];
+    for (int i = 0; i < n; ++i) {
+        curx[i] = pods[i].x;
+        cury[i] = pods[i].y;
     }
 
     double t = 1.0;
@@ -160,6 +213,16 @@ inline void step(Pod* pods, int n, const Command* cmds, bool firstTurn = false) 
         forwardTime(pods, n, first);
         t -= first;
         if (ci != cj) bounce(pods[ci], pods[cj]);
+        if (t > 0.0 && cps != nullptr) {
+            for (int i = 0; i < n; ++i) {
+                if (cpCollide(curx[i], cury[i], pods[i].x, pods[i].y,
+                              cps[pods[i].next], CP_RSQ)) {
+                    passCp(i);
+                }
+                curx[i] = pods[i].x;
+                cury[i] = pods[i].y;
+            }
+        }
     }
 
     for (int i = 0; i < n; ++i) {
@@ -168,12 +231,16 @@ inline void step(Pod* pods, int n, const Command* cmds, bool firstTurn = false) 
         pods[i].x = roundHalfUp(pods[i].x);
         pods[i].y = roundHalfUp(pods[i].y);
         if (pods[i].shieldtimer > 0) pods[i].shieldtimer--;
+        if (cps != nullptr && cpCollide(curx[i], cury[i], pods[i].x, pods[i].y,
+                                        cps[pods[i].next], CP_RSQ)) {
+            passCp(i);
+        }
     }
 }
 
 // Convenience wrapper: advance a single pod (no collisions possible).
 inline void simulateTurn(Pod& pod, const Command& cmd, bool firstTurn = false) {
-    step(&pod, 1, &cmd, firstTurn);
+    step(&pod, 1, &cmd, nullptr, 0, firstTurn);
 }
 
 }  // namespace engine
