@@ -30,12 +30,6 @@ inline double getAngle(double ax, double ay, double bx, double by) {
     return std::atan2(by - ay, bx - ax);
 }
 
-inline double normalizeAngle(double a) {
-    while (a < 0) a += TWO_PI;
-    while (a > TWO_PI) a -= TWO_PI;
-    return a;
-}
-
 struct Vec2 {
     double x = 0;
     double y = 0;
@@ -184,14 +178,13 @@ inline void step(Pod* pods, int n, const Command* cmds, const Vec2* cps = nullpt
                 pods[i].boostUsed = true;
                 thr = 650;
             } else {
-                thr = 200;
+                thr = 100;  // boost already spent -> normal max thrust (real CG)
             }
         }
         if (pods[i].shieldtimer > 0) thr = 0;
 
         if (firstTurn) {
-            pods[i].angle = normalizeAngle(
-                getAngle(pods[i].x, pods[i].y, cmds[i].targetX, cmds[i].targetY));
+            pods[i].angle = getAngle(pods[i].x, pods[i].y, cmds[i].targetX, cmds[i].targetY);
         } else {
             rotateToward(pods[i], cmds[i].targetX, cmds[i].targetY);
         }

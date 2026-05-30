@@ -86,10 +86,13 @@ Each turn, for every pod in order:
    - `SHIELD` → `shieldtimer = 4`; the pod gets **10× mass** for this turn's
      collisions.
    - `BOOST` → thrust **650** on the **first** use of the race (consumes the
-     one-shot boost); any later `BOOST` → thrust **200**.
+     one-shot boost); any later `BOOST` → thrust **100**, the normal max
+     (verified byte-exact against a real CG replay; robostac incorrectly uses 200).
    - If `shieldtimer > 0` → **thrust is forced to 0** (engine off).
 3. **Rotate** toward the target:
-   - **First turn only:** the pod instantly faces its target (no cap).
+   - **First turn only:** the pod instantly faces its target (no cap). The angle
+     is the raw signed `atan2` heading in (-π, π] — NOT normalized to [0, 2π)
+     (verified vs real CG; robostac normalizes, which diverges on negative headings).
    - Otherwise: rotate at most **18°** toward the target this turn.
 4. **Apply thrust:** `velocity += thrust · (cos angle, sin angle)`.
 5. **Move + collisions** (`nextTurn`): advance pods over the turn; resolve
@@ -113,7 +116,7 @@ Each turn, for every pod in order:
 | Pod radius | `400` (collision dist 800) | `podRSQ = 800²` |
 | Checkpoint radius | `600` | `cpRSQ = 600²` |
 | Collision min impulse | `120` | `minImpulse` |
-| BOOST thrust | `650` once, then `200` | move handling |
+| BOOST thrust | `650` once, then `100` (normal max) | real CG replay |
 | SHIELD | `shieldtimer = 4`, engine off while > 0 (3 turns), 10× mass | shield handling |
 | Normal thrust range | **0–100** (official); robostac rejects `> 200` as invalid | rules + `if v > 200` |
 | Per-pod timeout | `100` turns without reaching next checkpoint | `playerTimeout` |

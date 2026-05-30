@@ -83,6 +83,21 @@ static void first_turn_faces_target_instantly() {
     CHECK("first turn faces target (pi/2), uncapped", near(pod.angle, M_PI / 2));
 }
 
+// The first-turn heading keeps the raw signed atan2 value; CG does NOT wrap it
+// to [0, 2pi) (verified byte-exact against a real replay).
+static void first_turn_keeps_signed_angle() {
+    Pod pod;
+    pod.x = 1000;
+    pod.y = 1000;
+    Command cmd;
+    cmd.targetX = 0;  // down-left: atan2(-1000,-1000) = -3pi/4, not +5pi/4
+    cmd.targetY = 0;
+    cmd.thrust = 0;
+    simulateTurn(pod, cmd, true);
+    CHECK("first-turn angle stays signed (-3pi/4)",
+          near(pod.angle, std::atan2(-1000.0, -1000.0)));
+}
+
 // Two pods closing head-on at equal speed swap velocities (elastic, equal
 // mass), then friction trims each to trunc(v*0.85). Hand-derived from
 // robostac's bounce: gap 1000, closing 400/turn -> collide at t=0.5; post-bounce
@@ -152,16 +167,17 @@ static void boost_first_use_is_650() {
     CHECK("boost marked used", pod.boostUsed == true);
 }
 
-// A second BOOST (already used) degrades to thrust 200; friction -> 170.
-static void boost_second_use_is_200() {
+// A BOOST after the one-shot is spent applies the normal max thrust 100, not
+// 200 (verified byte-exact against a real CG replay). friction -> 85.
+static void boost_after_spent_is_thrust_100() {
     Pod pod;
     pod.boostUsed = true;
     Command cmd;
     cmd.targetX = 10000;
     cmd.boost = true;
     simulateTurn(pod, cmd);
-    CHECK("second boost vx after friction == trunc(200*0.85) == 170",
-          near(pod.vx, 170));
+    CHECK("spent boost == thrust 100 -> friction trunc(100*0.85)==85",
+          near(pod.vx, 85));
 }
 
 // While a shield is still active (timer > 0), the engine stays off.
@@ -182,11 +198,12 @@ int main() {
     rotation_caps_at_18_degrees();
     rotation_snaps_when_within_cap();
     first_turn_faces_target_instantly();
+    first_turn_keeps_signed_angle();
     head_on_collision_swaps_velocities();
     crossing_checkpoint_advances_next();
     shield_zeroes_thrust_and_arms_timer();
     boost_first_use_is_650();
-    boost_second_use_is_200();
+    boost_after_spent_is_thrust_100();
     active_shield_blocks_thrust();
 
     std::fprintf(stderr, "\n%d passed, %d failed\n", passed, failed);
