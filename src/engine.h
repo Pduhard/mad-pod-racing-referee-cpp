@@ -42,8 +42,8 @@ struct Pod {
     double vy = 0;
     double angle = 0;     // facing, radians (0 == +x)
     int shieldtimer = 0;  // > 0 while shield active (engine off, 10x mass)
-    int next = 0;          // index of the next checkpoint to reach
-    bool won = false;      // passed the final checkpoint
+    int next = 0;           // index of the next checkpoint to reach (wraps)
+    int cpPassed = 0;       // total checkpoints crossed (laps = cpPassed / numCp)
     bool boostUsed = false; // the one-shot BOOST has been consumed
 };
 
@@ -193,11 +193,8 @@ inline void step(Pod* pods, int n, const Command* cmds, const Vec2* cps = nullpt
     }
 
     auto passCp = [&](int i) {
-        pods[i].next++;
-        if (pods[i].next >= numCp) {
-            pods[i].next = numCp - 1;
-            pods[i].won = true;
-        }
+        pods[i].cpPassed++;
+        pods[i].next = (pods[i].next + 1) % numCp;
     };
 
     double curx[MAX_PODS];

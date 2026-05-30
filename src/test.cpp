@@ -140,7 +140,7 @@ static void crossing_checkpoint_advances_next() {
     step(&pod, 1, &cmd, cps, 2);
 
     CHECK("next advanced 0 -> 1 after crossing cp0", pod.next == 1);
-    CHECK("not won with a checkpoint still ahead", pod.won == false);
+    CHECK("one checkpoint counted", pod.cpPassed == 1);
 }
 
 // SHIELD: no thrust this turn, and the shield timer is set (then decays 4->3).
