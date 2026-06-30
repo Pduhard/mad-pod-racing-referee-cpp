@@ -126,6 +126,31 @@ static void head_on_collision_swaps_velocities() {
     CHECK("pod B returns near x=1000", near(pods[1].x, 1000));
 }
 
+// With collisions disabled (low leagues Wood 2 / Wood 1), two head-on pods pass
+// through each other: each keeps its direction, only friction trims the speed.
+static void head_on_no_collision_passes_through() {
+    Pod a;
+    a.x = 0;
+    a.vx = 200;
+    Pod b;
+    b.x = 1000;
+    b.vx = -200;
+    b.angle = M_PI;
+    Pod pods[2] = {a, b};
+    Command cmds[2];
+    cmds[0].targetX = 10000;
+    cmds[0].thrust = 0;
+    cmds[1].targetX = -10000;
+    cmds[1].thrust = 0;
+
+    step(pods, 2, cmds, nullptr, 0, /*firstTurn=*/false, /*collisions=*/false);
+
+    CHECK("no collision: pod A keeps +x, friction -> 170", near(pods[0].vx, 170));
+    CHECK("no collision: pod B keeps -x, friction -> -170", near(pods[1].vx, -170));
+    CHECK("pod A passed through to x=200", near(pods[0].x, 200));
+    CHECK("pod B passed through to x=800", near(pods[1].x, 800));
+}
+
 // A pod whose movement path passes within 600 of its next checkpoint advances
 // its `next` index (and is not "won" while more checkpoints remain).
 static void crossing_checkpoint_advances_next() {
@@ -200,6 +225,7 @@ int main() {
     first_turn_faces_target_instantly();
     first_turn_keeps_signed_angle();
     head_on_collision_swaps_velocities();
+    head_on_no_collision_passes_through();
     crossing_checkpoint_advances_next();
     shield_zeroes_thrust_and_arms_timer();
     boost_first_use_is_650();

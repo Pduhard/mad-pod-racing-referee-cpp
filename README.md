@@ -42,17 +42,32 @@ Correctness is checked two ways:
 
 ## Leagues
 
-CodinGame gates this game across leagues. **The physics is identical across all
-leagues** — only the I/O protocol and pod count change. This engine implements
-the full (high-league) simulation; lower-league views are reductions of it. See
-[`GAME_SPECIFICATION.md`](GAME_SPECIFICATION.md) for both protocols.
+CodinGame gates this game across six leagues. **The physics is identical across
+all leagues** — each one only unlocks a mechanic (and Gold also adds a 2nd pod
+and the raw protocol). The referee mirrors CodinGame's `leagueLevel` with a
+single flag, `-d "league=<name>"` (default `silver`):
+
+| `league=` | Pods/player | Protocol | Boost | Shield | Collisions |
+|-----------|:-----------:|----------|:-----:|:------:|:----------:|
+| `wood2`   | 1 | pre-computed | — | — | — |
+| `wood1`   | 1 | pre-computed | ✅ | — | — |
+| `bronze`  | 1 | pre-computed | ✅ | — | ✅ |
+| `silver`  | 1 | pre-computed | ✅ | ✅ | ✅ |
+| `gold`    | 2 | raw | ✅ | ✅ | ✅ |
+| `legend`  | 2 | raw (identical to Gold) | ✅ | ✅ | ✅ |
+
+```
+./csb-referee -p1 "<bot1>" -p2 "<bot2>" -d "seed=N" -d "league=gold"
+```
+
+See [`GAME_SPECIFICATION.md`](GAME_SPECIFICATION.md) for both protocols.
 
 ## Layout (planned)
 
 ```
 GAME_SPECIFICATION.md   the byte-exact contract (rules, constants, protocols)
 src/engine.h            header-only physics core (reusable)
-src/referee.cpp         cg-colosseum / Brutaltester referee (-p1 -p2 -d seed)
+src/referee.cpp         cg-colosseum / Brutaltester referee (-p1 -p2 -d seed -d league)
 src/test.cpp            unit + parity tests
 Makefile                build (referee, tests, bench)
 ```

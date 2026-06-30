@@ -129,11 +129,31 @@ static int angleDeg360(double rad) {
     return round_i(d);
 }
 
+// CodinGame's six leagues, identical to the leagueLevel ladder: each unlocks a
+// mechanic; Gold also adds the 2nd pod and the raw protocol. Legend == Gold.
+struct League {
+    int ppp;          // pods per player (1 low leagues, 2 Gold/Legend)
+    bool raw;         // raw protocol (§4b) vs pre-computed (§4a)
+    bool boost;       // BOOST unlocked
+    bool shield;      // SHIELD unlocked
+    bool collisions;  // pod-pod collisions enabled
+};
+
+static League leagueOf(const std::string& name) {
+    //                     ppp  raw    boost  shield collisions
+    if (name == "wood2")  return {1, false, false, false, false};
+    if (name == "wood1")  return {1, false, true,  false, false};
+    if (name == "bronze") return {1, false, true,  false, true};
+    if (name == "gold" || name == "legend")
+                          return {2, true,  true,  true,  true};
+    return                       {1, false, true,  true,  true};  // silver (default)
+}
+
 int main(int argc, char** argv) {
     std::string p1, p2;
     uint64_t seed = 0;
     int laps = 3;
-    bool gold = false;  // league: silver (pre-computed, 1 pod) | gold (raw, 2 pods)
+    std::string leagueName = "silver";  // wood2|wood1|bronze|silver|gold|legend
     for (int i = 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "-p1") && i + 1 < argc)
             p1 = argv[++i];
@@ -143,17 +163,15 @@ int main(int argc, char** argv) {
             std::string kv = argv[++i];
             if (kv.rfind("seed=", 0) == 0) seed = std::strtoull(kv.c_str() + 5, nullptr, 10);
             else if (kv.rfind("laps=", 0) == 0) laps = std::atoi(kv.c_str() + 5);
-            else if (kv.rfind("league=", 0) == 0) {
-                std::string lg = kv.substr(7);
-                gold = (lg == "gold" || lg == "legend");
-            }
+            else if (kv.rfind("league=", 0) == 0) leagueName = kv.substr(7);
         }
     }
+    const League lg = leagueOf(leagueName);
 
     std::vector<Vec2> cps = genMap(seed);
     int numCp = (int)cps.size();
     int target = laps * numCp;       // checkpoints to cross to finish
-    const int ppp = gold ? 2 : 1;    // pods per player
+    const int ppp = lg.ppp;          // pods per player
     const int nPods = 2 * ppp;
     auto playerOf = [&](int pod) { return pod / ppp; };
 
@@ -165,7 +183,7 @@ int main(int argc, char** argv) {
     const double offGold[4] = {1500, 500, -500, -1500};
     Pod pods[4];
     for (int p = 0; p < nPods; p++) {
-        double off = gold ? offGold[p] : offSilver[p];
+        double off = (ppp == 2) ? offGold[p] : offSilver[p];
         pods[p].x = round_i(cps[0].x + px * off);
         pods[p].y = round_i(cps[0].y + py * off);
         pods[p].next = 1;  // first target is cp1
@@ -175,7 +193,7 @@ int main(int argc, char** argv) {
     Bot bots[2] = {spawnBot(p1), spawnBot(p2)};
 
     // Init block — raw protocol only: laps + the full checkpoint list.
-    if (gold) {
+    if (lg.raw) {
         for (int i = 0; i < 2; i++) {
             std::fprintf(bots[i].in, "%d\n%d\n", laps, numCp);
             for (auto& cp : cps)
@@ -192,7 +210,7 @@ int main(int argc, char** argv) {
     for (int turn = 0; turn < MAX_TURNS && finishedCount == 0 && loser < 0; turn++) {
         // Send each player its view of the world.
         for (int i = 0; i < 2; i++) {
-            if (gold) {
+            if (lg.raw) {
                 // Raw state — your two pods first, then the opponent's two.
                 int order[4] = {i * 2, i * 2 + 1, (1 - i) * 2, (1 - i) * 2 + 1};
                 for (int o : order) {
@@ -223,9 +241,14 @@ int main(int argc, char** argv) {
         }
         if (loser >= 0) break;
 
+        // Gate abilities not unlocked in this league.
+        for (int p = 0; p < nPods; p++) {
+            if (!lg.boost) cmds[p].boost = false;
+            if (!lg.shield) cmds[p].shield = false;
+        }
         int before[4];
         for (int p = 0; p < nPods; p++) before[p] = pods[p].cpPassed;
-        step(pods, nPods, cmds, cps.data(), numCp, turn == 0);
+        step(pods, nPods, cmds, cps.data(), numCp, turn == 0, lg.collisions);
 
         for (int p = 0; p < nPods; p++) {
             if (pods[p].cpPassed > before[p]) lastCpTurn[p] = turn;

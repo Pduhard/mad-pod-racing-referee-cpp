@@ -163,9 +163,10 @@ constexpr int MAX_PODS = 8;  // CSB/MPR uses at most 4
 // then move with elastic collisions resolved earliest-first (robostac's
 // nextTurn), detecting checkpoint passage along the swept path, then friction +
 // round + shield decay. Pass cps/numCp to enable checkpoint detection; omit them
-// for pure-physics tests. Shield/boost activation and timeout land later.
+// for pure-physics tests. Shield/boost activation and timeout land later. Set
+// collisions=false to disable pod-pod collisions (the low leagues Wood 2/Wood 1).
 inline void step(Pod* pods, int n, const Command* cmds, const Vec2* cps = nullptr,
-                 int numCp = 0, bool firstTurn = false) {
+                 int numCp = 0, bool firstTurn = false, bool collisions = true) {
     for (int i = 0; i < n; ++i) {
         // Resolve effective thrust: SHIELD arms the timer and cuts the engine;
         // BOOST is 650 the first time, 200 after; an active shield forces 0.
@@ -204,34 +205,39 @@ inline void step(Pod* pods, int n, const Command* cmds, const Vec2* cps = nullpt
         cury[i] = pods[i].y;
     }
 
-    double t = 1.0;
-    while (t > 0.0) {
-        double first = t;
-        int ci = 0;
-        int cj = 0;
-        for (int i = n - 1; i > 0; --i) {
-            for (int j = i - 1; j >= 0; --j) {
-                double tx = timeToCollision(pods[i], pods[j], POD_RSQ);
-                if (tx <= first) {
-                    first = tx;
-                    ci = i;
-                    cj = j;
+    if (collisions) {
+        double t = 1.0;
+        while (t > 0.0) {
+            double first = t;
+            int ci = 0;
+            int cj = 0;
+            for (int i = n - 1; i > 0; --i) {
+                for (int j = i - 1; j >= 0; --j) {
+                    double tx = timeToCollision(pods[i], pods[j], POD_RSQ);
+                    if (tx <= first) {
+                        first = tx;
+                        ci = i;
+                        cj = j;
+                    }
+                }
+            }
+            forwardTime(pods, n, first);
+            t -= first;
+            if (ci != cj) bounce(pods[ci], pods[cj]);
+            if (t > 0.0 && cps != nullptr) {
+                for (int i = 0; i < n; ++i) {
+                    if (cpCollide(curx[i], cury[i], pods[i].x, pods[i].y,
+                                  cps[pods[i].next], CP_RSQ)) {
+                        passCp(i);
+                    }
+                    curx[i] = pods[i].x;
+                    cury[i] = pods[i].y;
                 }
             }
         }
-        forwardTime(pods, n, first);
-        t -= first;
-        if (ci != cj) bounce(pods[ci], pods[cj]);
-        if (t > 0.0 && cps != nullptr) {
-            for (int i = 0; i < n; ++i) {
-                if (cpCollide(curx[i], cury[i], pods[i].x, pods[i].y,
-                              cps[pods[i].next], CP_RSQ)) {
-                    passCp(i);
-                }
-                curx[i] = pods[i].x;
-                cury[i] = pods[i].y;
-            }
-        }
+    } else {
+        // Low leagues (Wood 2, Wood 1): no pod-pod collisions — one clean sweep.
+        forwardTime(pods, n, 1.0);
     }
 
     for (int i = 0; i < n; ++i) {
