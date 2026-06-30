@@ -1,10 +1,12 @@
 // csb-referee — a Mad Pod Racing referee for the cg-colosseum / Brutaltester
 // protocol, built on the byte-exact engine.h physics core.
 //
-//   csb-referee -p1 "<bot1 cmd>" -p2 "<bot2 cmd>" -d "seed=N" [-d "laps=N"]
+//   csb-referee -p1 "<bot1 cmd>" -p2 "<bot2 cmd>" -d "seed=N" [-d "laps=N"] [-d "league=gold"]
 //
-// Spawns each bot, runs the low-league (1 pod per player) race, prints one
-// integer score per player on stdout (higher = better), exit 0.
+// Spawns each bot and runs a race, printing one integer score per player on
+// stdout (higher = better), exit 0. The league flag mirrors CodinGame's own
+// leagueLevel: default "silver" = 1 pod/player + the pre-computed protocol (§4a);
+// "gold"/"legend" = 2 pods/player + the raw protocol (§4b, init + 4 pods).
 //
 // Map generation is deterministic per seed but NOT CG-online-identical (CG's
 // map RNG isn't reversed yet) — fine for fair, repeatable local games. The
@@ -14,6 +16,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -119,10 +122,18 @@ static Command parseCmd(const char* line) {
     return c;
 }
 
+// Pod facing as an integer degree in [0, 360), for the raw (Gold) protocol.
+static int angleDeg360(double rad) {
+    double d = std::fmod(rad * 180.0 / M_PI, 360.0);
+    if (d < 0) d += 360.0;
+    return round_i(d);
+}
+
 int main(int argc, char** argv) {
     std::string p1, p2;
     uint64_t seed = 0;
     int laps = 3;
+    bool gold = false;  // league: silver (pre-computed, 1 pod) | gold (raw, 2 pods)
     for (int i = 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "-p1") && i + 1 < argc)
             p1 = argv[++i];
@@ -132,72 +143,115 @@ int main(int argc, char** argv) {
             std::string kv = argv[++i];
             if (kv.rfind("seed=", 0) == 0) seed = std::strtoull(kv.c_str() + 5, nullptr, 10);
             else if (kv.rfind("laps=", 0) == 0) laps = std::atoi(kv.c_str() + 5);
+            else if (kv.rfind("league=", 0) == 0) {
+                std::string lg = kv.substr(7);
+                gold = (lg == "gold" || lg == "legend");
+            }
         }
     }
 
     std::vector<Vec2> cps = genMap(seed);
     int numCp = (int)cps.size();
-    int target = laps * numCp;  // checkpoints to cross to finish
+    int target = laps * numCp;       // checkpoints to cross to finish
+    const int ppp = gold ? 2 : 1;    // pods per player
+    const int nPods = 2 * ppp;
+    auto playerOf = [&](int pod) { return pod / ppp; };
 
-    // Start both pods at cp0, offset perpendicular to the cp0->cp1 direction.
+    // Start pods near cp0, offset perpendicular to the cp0->cp1 direction.
     double dx = cps[1].x - cps[0].x, dy = cps[1].y - cps[0].y;
     double len = std::sqrt(dx * dx + dy * dy);
     double px = -dy / len, py = dx / len;  // unit perpendicular
-    Pod pods[2];
-    for (int i = 0; i < 2; i++) {
-        double off = (i == 0 ? 500.0 : -500.0);
-        pods[i].x = round_i(cps[0].x + px * off);
-        pods[i].y = round_i(cps[0].y + py * off);
-        pods[i].next = 1;  // first target is cp1
-        pods[i].angle = std::atan2(cps[1].y - pods[i].y, cps[1].x - pods[i].x);
+    const double offSilver[2] = {500, -500};
+    const double offGold[4] = {1500, 500, -500, -1500};
+    Pod pods[4];
+    for (int p = 0; p < nPods; p++) {
+        double off = gold ? offGold[p] : offSilver[p];
+        pods[p].x = round_i(cps[0].x + px * off);
+        pods[p].y = round_i(cps[0].y + py * off);
+        pods[p].next = 1;  // first target is cp1
+        pods[p].angle = std::atan2(cps[1].y - pods[p].y, cps[1].x - pods[p].x);
     }
 
     Bot bots[2] = {spawnBot(p1), spawnBot(p2)};
-    int lastCpTurn[2] = {0, 0};
-    int finishOrder[2] = {-1, -1};
-    int finishedCount = 0;
-    int loser = -1;  // eliminated by timeout
 
-    for (int turn = 0; turn < MAX_TURNS && finishedCount == 0 && loser < 0; turn++) {
+    // Init block — raw protocol only: laps + the full checkpoint list.
+    if (gold) {
         for (int i = 0; i < 2; i++) {
-            const Vec2& cp = cps[pods[i].next];
-            const Pod& opp = pods[1 - i];
-            double ddx = cp.x - pods[i].x, ddy = cp.y - pods[i].y;
-            int dist = round_i(std::sqrt(ddx * ddx + ddy * ddy));
-            std::fprintf(bots[i].in, "%d %d %d %d %d %d\n", round_i(pods[i].x), round_i(pods[i].y),
-                         round_i(cp.x), round_i(cp.y), dist, angleToCp(pods[i], cp));
-            std::fprintf(bots[i].in, "%d %d\n", round_i(opp.x), round_i(opp.y));
+            std::fprintf(bots[i].in, "%d\n%d\n", laps, numCp);
+            for (auto& cp : cps)
+                std::fprintf(bots[i].in, "%d %d\n", round_i(cp.x), round_i(cp.y));
             std::fflush(bots[i].in);
         }
-        Command cmds[2];
+    }
+
+    int lastCpTurn[4] = {0, 0, 0, 0};
+    int finishOrder[2] = {-1, -1};
+    int finishedCount = 0;
+    int loser = -1;  // eliminated by timeout / death
+
+    for (int turn = 0; turn < MAX_TURNS && finishedCount == 0 && loser < 0; turn++) {
+        // Send each player its view of the world.
         for (int i = 0; i < 2; i++) {
-            char line[256] = {0};
-            if (!std::fgets(line, sizeof line, bots[i].out)) {
-                loser = i;  // bot died / no output
+            if (gold) {
+                // Raw state — your two pods first, then the opponent's two.
+                int order[4] = {i * 2, i * 2 + 1, (1 - i) * 2, (1 - i) * 2 + 1};
+                for (int o : order) {
+                    const Pod& p = pods[o];
+                    std::fprintf(bots[i].in, "%d %d %d %d %d %d\n", round_i(p.x), round_i(p.y),
+                                 round_i(p.vx), round_i(p.vy), angleDeg360(p.angle), p.next);
+                }
             } else {
-                cmds[i] = parseCmd(line);
+                const Vec2& cp = cps[pods[i].next];
+                const Pod& opp = pods[1 - i];
+                double ddx = cp.x - pods[i].x, ddy = cp.y - pods[i].y;
+                int dist = round_i(std::sqrt(ddx * ddx + ddy * ddy));
+                std::fprintf(bots[i].in, "%d %d %d %d %d %d\n", round_i(pods[i].x), round_i(pods[i].y),
+                             round_i(cp.x), round_i(cp.y), dist, angleToCp(pods[i], cp));
+                std::fprintf(bots[i].in, "%d %d\n", round_i(opp.x), round_i(opp.y));
+            }
+            std::fflush(bots[i].in);
+        }
+
+        // Read ppp command line(s) per player.
+        Command cmds[4];
+        for (int i = 0; i < 2 && loser < 0; i++) {
+            for (int k = 0; k < ppp; k++) {
+                char line[256] = {0};
+                if (!std::fgets(line, sizeof line, bots[i].out)) { loser = i; break; }
+                cmds[i * ppp + k] = parseCmd(line);
             }
         }
         if (loser >= 0) break;
 
-        int before[2] = {pods[0].cpPassed, pods[1].cpPassed};
-        step(pods, 2, cmds, cps.data(), numCp, turn == 0);
+        int before[4];
+        for (int p = 0; p < nPods; p++) before[p] = pods[p].cpPassed;
+        step(pods, nPods, cmds, cps.data(), numCp, turn == 0);
 
-        for (int i = 0; i < 2; i++) {
-            if (pods[i].cpPassed > before[i]) lastCpTurn[i] = turn;
-            if (pods[i].cpPassed >= target && finishOrder[i] < 0) {
-                finishOrder[i] = finishedCount++;
-            }
-            if (turn - lastCpTurn[i] >= TIMEOUT_TURNS) loser = i;
+        for (int p = 0; p < nPods; p++) {
+            if (pods[p].cpPassed > before[p]) lastCpTurn[p] = turn;
+            int pl = playerOf(p);
+            if (pods[p].cpPassed >= target && finishOrder[pl] < 0)
+                finishOrder[pl] = finishedCount++;
+        }
+        // A player is eliminated only when ALL its pods are stale (no CP in TIMEOUT turns).
+        for (int pl = 0; pl < 2 && loser < 0; pl++) {
+            int recent = 0;
+            for (int k = 0; k < ppp; k++) recent = std::max(recent, lastCpTurn[pl * ppp + k]);
+            if (turn - recent >= TIMEOUT_TURNS) loser = pl;
         }
     }
 
-    // Score: finishers rank first (earliest finish best), then by progress.
-    auto score = [&](int i) -> long long {
-        if (loser == i) return -1;
-        if (finishOrder[i] >= 0) return 1000000000LL - finishOrder[i];
-        double ddx = cps[pods[i].next].x - pods[i].x, ddy = cps[pods[i].next].y - pods[i].y;
-        return (long long)pods[i].cpPassed * 1000000LL - (long long)std::sqrt(ddx * ddx + ddy * ddy);
+    // Score per player: finishers first (earliest best), else the best pod's progress.
+    auto podProgress = [&](int p) -> long long {
+        double ddx = cps[pods[p].next].x - pods[p].x, ddy = cps[pods[p].next].y - pods[p].y;
+        return (long long)pods[p].cpPassed * 1000000LL - (long long)std::sqrt(ddx * ddx + ddy * ddy);
+    };
+    auto score = [&](int pl) -> long long {
+        if (loser == pl) return -1;
+        if (finishOrder[pl] >= 0) return 1000000000LL - finishOrder[pl];
+        long long best = podProgress(pl * ppp);
+        for (int k = 1; k < ppp; k++) best = std::max(best, podProgress(pl * ppp + k));
+        return best;
     };
     std::printf("%lld\n%lld\n", score(0), score(1));
 
