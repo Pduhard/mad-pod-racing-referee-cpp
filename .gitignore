@@ -6,6 +6,7 @@
 *.exe
 csb-referee
 referee
+test_engine
 *_test
 *_bench
 *_tests
