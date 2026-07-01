@@ -1,12 +1,13 @@
 // csb-referee — a Mad Pod Racing referee for the cg-colosseum / Brutaltester
 // protocol, built on the byte-exact engine.h physics core.
 //
-//   csb-referee -p1 "<bot1 cmd>" -p2 "<bot2 cmd>" -d "seed=N" [-d "laps=N"] [-d "league=gold"]
+//   csb-referee -p1 "<bot1 cmd>" -p2 "<bot2 cmd>" -d "seed=N" [-d "laps=N"] [-d "league=6"]
 //
 // Spawns each bot and runs a race, printing one integer score per player on
 // stdout (higher = better), exit 0. The league flag mirrors CodinGame's own
-// leagueLevel: default "silver" = 1 pod/player + the pre-computed protocol (§4a);
-// "gold"/"legend" = 2 pods/player + the raw protocol (§4b, init + 4 pods).
+// leagueLevel: an iso-CG number 1..6 (wood2..legend) or a league name. Unset
+// defaults to "legend" (top) = 2 pods/player + the raw protocol (§4b); the lower
+// leagues use 1 pod/player + the pre-computed protocol (§4a).
 //
 // Map generation is deterministic per seed but NOT CG-online-identical (CG's
 // map RNG isn't reversed yet) — fine for fair, repeatable local games. The
@@ -153,7 +154,8 @@ int main(int argc, char** argv) {
     std::string p1, p2;
     uint64_t seed = 0;
     int laps = 3;
-    std::string leagueName = "silver";  // wood2|wood1|bronze|silver|gold|legend
+    // Top league by default (iso-CG: an unset league runs the full game).
+    std::string leagueName = "legend";  // wood2|wood1|bronze|silver|gold|legend
     for (int i = 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "-p1") && i + 1 < argc)
             p1 = argv[++i];
@@ -163,10 +165,27 @@ int main(int argc, char** argv) {
             std::string kv = argv[++i];
             if (kv.rfind("seed=", 0) == 0) seed = std::strtoull(kv.c_str() + 5, nullptr, 10);
             else if (kv.rfind("laps=", 0) == 0) laps = std::atoi(kv.c_str() + 5);
-            else if (kv.rfind("league=", 0) == 0) leagueName = kv.substr(7);
+            else if (kv.rfind("league=", 0) == 0) {
+                std::string v = kv.substr(7);
+                // Accept an iso-CG numeric level (1..6) or a league name.
+                bool numeric =
+                    !v.empty() &&
+                    std::all_of(v.begin(), v.end(), [](char c) { return c >= '0' && c <= '9'; });
+                if (numeric) {
+                    static const char* const LADDER[6] = {"wood2", "wood1", "bronze",
+                                                          "silver", "gold", "legend"};
+                    int n = std::atoi(v.c_str());
+                    n = n < 1 ? 1 : (n > 6 ? 6 : n);
+                    leagueName = LADDER[n - 1];
+                } else {
+                    leagueName = v;
+                }
+            }
         }
     }
     const League lg = leagueOf(leagueName);
+    std::fprintf(stderr, "League: %s (%d pod%s/player)\n", leagueName.c_str(), lg.ppp,
+                 lg.ppp == 1 ? "" : "s");
 
     std::vector<Vec2> cps = genMap(seed);
     int numCp = (int)cps.size();
